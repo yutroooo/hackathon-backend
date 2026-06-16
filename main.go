@@ -30,10 +30,10 @@ func main() {
 		// 実際にDBにPingを打って接続確認
 		//err := db.Ping()
 		//if err != nil {
-			//log.Printf("DB接続失敗: %v", err)
-			//http.Error(w, "DB Connection Failed", http.StatusInternalServerError)
-			//return
-		}
+		//log.Printf("DB接続失敗: %v", err)
+		//http.Error(w, "DB Connection Failed", http.StatusInternalServerError)
+		//return
+		//}
 
 		// CORS設定（フロントエンドのVercelから呼び出せるようにする準備）
 		w.Header().Set("Access-Control-Allow-Origin", "*")
