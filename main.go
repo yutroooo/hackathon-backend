@@ -10,6 +10,20 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
+	}
+}
 func main() {
 	// DB接続のための準備（Cloud Runの環境変数から取得）
 	mysqlUser := os.Getenv("MYSQL_USER")
@@ -25,9 +39,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// 疎通確認用のAPIエンドポイント
-	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		// 実際にDBにPingを打って接続確認（コメントアウトを解除して健全化！）
+	http.HandleFunc("/api/health", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		err := db.Ping()
 		if err != nil {
 			log.Printf("DB接続失敗: %v", err)
@@ -35,10 +47,11 @@ func main() {
 			return
 		}
 
-		// CORS設定（フロントエンドのVercelから呼び出せるようにする準備）
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		fmt.Fprintf(w, "DB Connection Success! Ready to Hack!")
-	})
+	}))
+
+	http.HandleFunc("/api/auth/register", withCORS(handleRegister(db)))
+	http.HandleFunc("/api/auth/login", withCORS(handleLogin(db)))
 
 	// Cloud Runが指定するポート（デフォルト8080）でサーバー起動
 	port := os.Getenv("PORT")
