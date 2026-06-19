@@ -114,3 +114,26 @@ type CommitRequest struct {
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
+
+// User テーブルに対応するモデル
+type User struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"-"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// Item テーブルに対応するモデル
+type Item struct {
+	ID           string  `json:"id"`
+	SellerID     string  `json:"seller_id"`
+	BuyerID      *string `json:"buyer_id,omitempty"`
+	Title        string  `json:"title"`
+	Description  string  `json:"description"`
+	InitialPrice int     `json:"initial_price"`
+	CurrentPrice int     `json:"current_price"`
+	Category     string  `json:"category"`
+	Status       string  `json:"status"`
+	CreatedAt    string  `json:"created_at"`
+}
