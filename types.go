@@ -50,6 +50,7 @@ type CreateItemRequest struct {
 	Description  string `json:"description"`
 	InitialPrice int    `json:"initial_price"`
 	Category     string `json:"category"`
+	ImageURL     string `json:"image_url"`
 }
 
 // ItemResponse フロントに返す商品情報（一覧・詳細共通）
@@ -137,4 +138,5 @@ type Item struct {
 	Category     string  `json:"category"`
 	Status       string  `json:"status"`
 	CreatedAt    string  `json:"created_at"`
+	ImageURL     string  `json:"image_url"`
 }
