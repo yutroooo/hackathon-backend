@@ -262,3 +262,12 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					}
 				}()
 			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+
+		default:
+			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
+		}
+
+	}
+}
