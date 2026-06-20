@@ -176,7 +176,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					}
 
 					// 商品詳細を取得
-					err = db.QueryRow("SELECT title, current_price, description FROM items WHERE id = ?", itemID).Scan(&itemTitle, &currentPrice, &itemDesc)
+					err = db.QueryRow("SELECT title, current_price, description FROM items WHERE id = ?", itemID).Scan(&itemTitle, &currentPrice, &itemDesc, &sellerID)
 					if err != nil {
 						log.Printf("AI用商品情報取得エラー: %v", err)
 						itemTitle = "不明な商品"
@@ -187,8 +187,8 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					rows, err := db.Query(historyQuery, roomID)
 
 					var chatHistoryStr string
-					var isLatestMessageFromSeller bool // 🎯 出品者からのメッセージかどうかの判定フラグ
-					var isFirstRow = true
+					var isLatestMessageFromSeller bool // 出品者からのメッセージかどうかのフラグ
+					var isFirstRow = true              // 1件目（最新メッセージ）を特定するためのフラグ
 
 					if err == nil {
 						defer rows.Close()
@@ -197,7 +197,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 							var msg string
 							rows.Scan(&sID, &msg)
 
-							// 一番最新のメッセージ（1行目）の送信者が、出品者本人（sellerID）ならフラグを立てる！
+							// 🎯 最新のメッセージの送信者が、出品者本人（sellerID）ならフラグを立てる
 							if isFirstRow && sID != nil && *sID == sellerID {
 								isLatestMessageFromSeller = true
 							}
@@ -211,12 +211,13 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						}
 					}
 
-					// 最新のメッセージが出品者（あなた）自身からだった場合は、AIは空気を読んでここで完全に処理を終了する！
+					// 最新のメッセージが出品者（あなた）自身からだった場合は、AIをここで緊急停止
 					if isLatestMessageFromSeller {
 						log.Printf("👤 最新のメッセージが出品者本人のため、AI自動応答をスキップして終了します。")
 						return
 					}
 
+					// Gemini API の呼び出し準備 (ここから下はそのまま)
 					// ーーーこの下に Gemini API の呼び出し準備（client, err := genai.NewClient...）が続きますーーー
 
 					//  Gemini API の呼び出し準備
