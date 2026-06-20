@@ -61,7 +61,12 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 		}
 
 		// 出品中の商品を新しい順に取得
-		query := "SELECT id, seller_id, buyer_id, title, description, initial_price, current_price, category, status, created_at FROM items WHERE status = 'on_sale' ORDER BY created_at DESC"
+		query := `
+          SELECT i.id, i.seller_id, u.name, i.buyer_id, i.title, i.description, i.initial_price, i.current_price, i.category, i.status, i.created_at 
+          FROM items i
+          JOIN users u ON i.seller_id = u.id
+          WHERE i.status = 'on_sale' 
+          ORDER BY i.created_at DESC`
 		rows, err := db.Query(query)
 		if err != nil {
 			log.Printf("商品一覧取得エラー: %v", err)
@@ -75,7 +80,7 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 			var item ItemResponse
 			var createdAtRaw []byte // TIMESTAMP型を安全に読み込むため一時的にバイト配列で受ける
 
-			err := rows.Scan(&item.ID, &item.SellerID, &item.BuyerID, &item.Title, &item.Description, &item.InitialPrice, &item.CurrentPrice, &item.Category, &item.Status, &createdAtRaw)
+			err := rows.Scan(&item.ID, &item.SellerID, &item.SellerName, &item.BuyerID, &item.Title, &item.Description, &item.InitialPrice, &item.CurrentPrice, &item.Category, &item.Status, &createdAtRaw)
 			if err != nil {
 				log.Printf("行スキャンエラー: %v", err)
 				respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
