@@ -131,7 +131,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			// 🛠️ 【修正2】req.SenderID と req.Message の空チェックを追加
+			// 【修正2】req.SenderID と req.Message の空チェックを追加
 			if req.SenderID == "" || req.Message == "" {
 				respondWithError(w, http.StatusBadRequest, "必須項目(sender_id, message)が不足しています")
 				return
@@ -165,7 +165,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 				func() {
 					// 無名関数の中で独立した err を宣言し、外側との干渉によるコンパイルエラーを完全に防ぐ！
 					var err error
-					var itemID, itemTitle, itemDesc string
+					var itemID, itemTitle, itemDesc, sellerID string // 末尾に sellerID を追加
 					var currentPrice int
 
 					// 部屋から商品IDを特定
@@ -187,12 +187,22 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					rows, err := db.Query(historyQuery, roomID)
 
 					var chatHistoryStr string
+					var isLatestMessageFromSeller bool // 🎯 出品者からのメッセージかどうかの判定フラグ
+					var isFirstRow = true
+
 					if err == nil {
 						defer rows.Close()
 						for rows.Next() {
 							var sID *string
 							var msg string
 							rows.Scan(&sID, &msg)
+
+							// 一番最新のメッセージ（1行目）の送信者が、出品者本人（sellerID）ならフラグを立てる！
+							if isFirstRow && sID != nil && *sID == sellerID {
+								isLatestMessageFromSeller = true
+							}
+							isFirstRow = false
+
 							senderLabel := "ユーザー"
 							if sID == nil {
 								senderLabel = "あなた（AI）"
@@ -200,6 +210,14 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 							chatHistoryStr = fmt.Sprintf("[%s]: %s\n%s", senderLabel, msg, chatHistoryStr)
 						}
 					}
+
+					// 最新のメッセージが出品者（あなた）自身からだった場合は、AIは空気を読んでここで完全に処理を終了する！
+					if isLatestMessageFromSeller {
+						log.Printf("👤 最新のメッセージが出品者本人のため、AI自動応答をスキップして終了します。")
+						return
+					}
+
+					// ーーーこの下に Gemini API の呼び出し準備（client, err := genai.NewClient...）が続きますーーー
 
 					//  Gemini API の呼び出し準備
 					apiKey := os.Getenv("GEMINI_API_KEY")
