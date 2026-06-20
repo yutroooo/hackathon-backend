@@ -112,7 +112,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			// 🛠️ 【修正1】保存する前に、まず先に部屋のタイプと存在チェックを実施
+			// 保存する前に、まず先に部屋のタイプと存在チェックを実施
 			var roomType string
 			err := db.QueryRow("SELECT type FROM chat_rooms WHERE id = ?", roomID).Scan(&roomType)
 			if err != nil {
@@ -138,10 +138,12 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 			if roomType == "negotiation" {
 				// 即時実行の無名関数で包むことで、エラー時に 'return' で安全にAI処理だけをスキップさせます
 				func() {
+					// 無名関数の中で独立した err を宣言し、外側との干渉によるコンパイルエラーを完全に防ぐ！
+					var err error
 					var itemID, itemTitle, itemDesc string
 					var currentPrice int
 
-					// 部屋から商品IDを特定し、きっちりエラーハンドリング
+					// 部屋から商品IDを特定
 					err = db.QueryRow("SELECT item_id FROM chat_rooms WHERE id = ?", roomID).Scan(&itemID)
 					if err != nil {
 						log.Printf("AI用商品ID取得エラー（処理をスキップします）: %v", err)
@@ -186,10 +188,10 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 
 					model := client.GenerativeModel("gemini-2.5-flash")
 
-					// Geminiに「構造化したJSONで返せ」と命令するモードを設定！
+					// Geminiに「構造化したJSONで返せ」と命令するモードを設定
 					model.ResponseMIMEType = "application/json"
 
-					// プロンプトをJSON返却仕様＆合意判定仕様にチューニング
+					//  プロンプトをJSON返却仕様＆合意判定仕様にチューニング
 					prompt := fmt.Sprintf(`
       あなたはフリマアプリの「AI価格交渉代行エージェント」です。
       出品者の代わりに、購入希望のユーザーと丁寧かつリアルな価格交渉を行ってください。
@@ -212,7 +214,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
       - **最重要**: ユーザーの提案した価格、あるいはお互いの妥協点で価格交渉が「成立・合意」に達したと判断した場合は、"is_agreed" を true にし、"agreed_price" に合意した金額を整数（数値）で設定してください。まだ交渉が続いている場合は "is_agreed" は false にしてください。
 
       【出力フォーマット】
-      必ず以下のJSONフォーマットの形式だけで返答してください。余計な解説や前置き、バッククォーツ（json ）などは一切含めないでください。
+      必ず以下のJSONフォーマットの形式だけで返答してください。余計な解説や前置き、バッククォーツなどは一切含めないでください。
 
       {
          "message": "ユーザーに送信するチャットメッセージ本文（解説などは含めない単一のテキスト）",
@@ -231,30 +233,29 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					// AIの返答（JSON文字列）を取り出す
 					aiJsonStr := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
 
-					// AIの返答JSONをパースするための構造体
-					type ChatAIResponse struct {
+					var aiRes struct {
 						Message     string `json:"message"`
 						IsAgreed    bool   `json:"is_agreed"`
 						AgreedPrice int    `json:"agreed_price"`
 					}
 
-					var aiRes ChatAIResponse
 					if err := json.Unmarshal([]byte(aiJsonStr), &aiRes); err != nil {
 						log.Printf("AI応答のJSONパース失敗、通常のテキストとしてフォールバックします: %v", err)
-						aiRes.Message = aiJsonStr // パース失敗時はそのままメッセージにする防衛策
+						aiRes.Message = aiJsonStr
 					}
 
-					//  AIの確定したメッセージを、DBに刻み込む！
-					_, err = db.Exec(query, roomID, nil, aiRes.Message) // sender_id = null (AI)
+					//  AIの確定したメッセージを、DBに
+					// (query は外側のスコープに定義されているものをそのままキャプチャします)
+					_, err = db.Exec(query, roomID, nil, aiRes.Message)
 					if err != nil {
 						log.Printf("AI自動返信の保存に失敗: %v", err)
 					}
 
 					// 交渉成立（is_agreed == true）なら、商品の現在価格を上書き更新する！
 					if aiRes.IsAgreed && aiRes.AgreedPrice > 0 {
-						log.Printf("【価格交渉成立】価格を %d 円に更新します。商品ID: %s", aiRes.AgreedPrice, itemID)
+						log.Printf("🎉 【価格交渉成立】価格を %d 円に更新します。商品ID: %s", aiRes.AgreedPrice, itemID)
 						updatePriceQuery := "UPDATE items SET current_price = ? WHERE id = ?"
-						_, err := db.Exec(updatePriceQuery, aiRes.AgreedPrice, itemID)
+						_, err = db.Exec(updatePriceQuery, aiRes.AgreedPrice, itemID)
 						if err != nil {
 							log.Printf("DBの商品価格更新エラー: %v", err)
 						}
