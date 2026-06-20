@@ -163,31 +163,29 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 			if roomType == "negotiation" {
 				// 即時実行の無名関数で包むことで、エラー時に 'return' で安全にAI処理だけをスキップさせます
 				func() {
-					// 無名関数の中で独立した err を宣言し、外側との干渉によるコンパイルエラーを完全に防ぐ！
 					var err error
-					var itemID, itemTitle, itemDesc, sellerID string // 末尾に sellerID を追加
+					var itemID, itemTitle, itemDesc, sellerID string
 					var currentPrice int
 
-					// 部屋から商品IDを特定
+					// 1. 部屋から商品IDを特定
 					err = db.QueryRow("SELECT item_id FROM chat_rooms WHERE id = ?", roomID).Scan(&itemID)
 					if err != nil {
 						log.Printf("AI用商品ID取得エラー（処理をスキップします）: %v", err)
 						return
 					}
 
-					// 商品詳細を取得
-					err = db.QueryRow("SELECT title, current_price, description FROM items WHERE id = ?", itemID).Scan(&itemTitle, &currentPrice, &itemDesc, &sellerID)
+					// 2. 🎉【修正！】SELECTに seller_id を追加して、商品の持ち主のIDを正しく取得！
+					err = db.QueryRow("SELECT title, current_price, description, seller_id FROM items WHERE id = ?", itemID).Scan(&itemTitle, &currentPrice, &itemDesc, &sellerID)
 					if err != nil {
 						log.Printf("AI用商品情報取得エラー: %v", err)
 						itemTitle = "不明な商品"
 					}
 
-					// 会話の流れを汲み取るために、直近のチャット履歴を5件ほど取得する
+					// 3. 会話の流れを汲み取るために、直近のチャット履歴を5件ほど取得する
 					historyQuery := "SELECT sender_id, message FROM chat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 5"
 					rows, err := db.Query(historyQuery, roomID)
 
 					var chatHistoryStr string
-
 					if err == nil {
 						defer rows.Close()
 						for rows.Next() {
@@ -203,16 +201,20 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						}
 					}
 
+					// 4. 💤 メイン処理がDBに書き込むのを 0.3 秒じっと待つ
 					time.Sleep(300 * time.Millisecond)
 
+					// 5. 🎉【修正！】いまDBに書き込まれた、部屋の「一番新しいメッセージの送信者」をガチで取得！
 					var ultimateSenderID *string
-					// リクエスト変数は信用せず、「いま部屋にある一番新しいメッセージの送信者」をDBから問答無用で取得
 					errCheck := db.QueryRow("SELECT sender_id FROM chat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 1", roomID).Scan(&ultimateSenderID)
 
+					// 6. 🛑 最新の送信者がオーナー（出品者）本人なら、AIの口を塞いで終了！
 					if errCheck == nil && ultimateSenderID != nil && *ultimateSenderID == sellerID {
 						log.Printf("👤 【AI強制終了】最新の発言はオーナー本人です！ポンコツAIを沈黙させます。")
 						return
 					}
+
+					// ーーー 💡 ここから下は、既存の Gemini API 呼び出しの処理（apiKey := os.Getenv...）へそのまま綺麗に繋がります ーーー
 
 					// Gemini API の呼び出し準備 (ここから下はそのまま)
 					// ーーーこの下に Gemini API の呼び出し準備（client, err := genai.NewClient...）が続きますーーー
