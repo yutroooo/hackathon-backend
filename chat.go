@@ -13,7 +13,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-// handleCreateRoom チャット部屋の作成 (POST /api/rooms)
+// handleCreateRoom チャット部屋の作成・または既存の部屋を返す (POST /api/rooms)
 func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -32,12 +32,37 @@ func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// ========================================================
+		// 🎯 【超重要ハック】すでにこの商品に対するアクティブな部屋があるかチェック！
+		// ========================================================
+		var existingRoomID string
+		checkQuery := "SELECT id FROM chat_rooms WHERE item_id = ? AND type = ? AND status = 'active' LIMIT 1"
+		err := db.QueryRow(checkQuery, req.ItemID, req.Type).Scan(&existingRoomID)
+
+		if err == nil {
+			// 🎉 すでに部屋が存在していた！新しく作らずに、その部屋IDを返して合流させる！
+			log.Printf("👥 既存のチャット部屋を発見。合流させます。RoomID: %s, ItemID: %s", existingRoomID, req.ItemID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK) // 既存返却なので 200 OK
+			json.NewEncoder(w).Encode(map[string]string{"room_id": existingRoomID, "status": "active"})
+			return
+		} else if err != sql.ErrNoRows {
+			// エラーが「行が見つからない」以外（DB接続不良など）なら500で落とす
+			log.Printf("既存チャット部屋確認エラー: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+
+		// ========================================================
+		// 🟢 部屋がまだない場合だけ、以下で新規に作成する（元のロジック）
+		// ========================================================
+
 		// ユニークな部屋IDの生成 (RM+ナノ秒)
 		roomID := fmt.Sprintf("RM%d", time.Now().UnixNano())
 
 		// DBに部屋を挿入
 		query := "INSERT INTO chat_rooms (id, item_id, type, status) VALUES (?, ?, ?, 'active')"
-		_, err := db.Exec(query, roomID, req.ItemID, req.Type)
+		_, err = db.Exec(query, roomID, req.ItemID, req.Type)
 		if err != nil {
 			log.Printf("チャット部屋作成エラー: %v", err)
 			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -45,7 +70,7 @@ func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusCreated) // 新規作成なので 21 Created
 		json.NewEncoder(w).Encode(map[string]string{"room_id": roomID, "status": "active"})
 	}
 }
