@@ -203,9 +203,14 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						}
 					}
 
-					// 🎯 【究極の最終防衛ライン】DBの書き込み遅延に左右されない、リクエスト直引き判定！
-					if req.SenderID == sellerID {
-						log.Printf("👤 送信者が「出品者（オーナー）」本人です！ポンコツAIを即座に強制シャットダウンします。")
+					time.Sleep(300 * time.Millisecond)
+
+					var ultimateSenderID *string
+					// リクエスト変数は信用せず、「いま部屋にある一番新しいメッセージの送信者」をDBから問答無用で取得
+					errCheck := db.QueryRow("SELECT sender_id FROM chat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 1", roomID).Scan(&ultimateSenderID)
+
+					if errCheck == nil && ultimateSenderID != nil && *ultimateSenderID == sellerID {
+						log.Printf("👤 【AI強制終了】最新の発言はオーナー本人です！ポンコツAIを沈黙させます。")
 						return
 					}
 
