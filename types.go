@@ -130,6 +130,7 @@ type User struct {
 type Item struct {
 	ID           string  `json:"id"`
 	SellerID     string  `json:"seller_id"`
+	SellerName   string  `json:"seller_name"`
 	BuyerID      *string `json:"buyer_id,omitempty"`
 	Title        string  `json:"title"`
 	Description  string  `json:"description"`

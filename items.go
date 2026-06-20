@@ -36,7 +36,7 @@ func handleCreateItem(db *sql.DB) http.HandlerFunc {
 		// ユニークな商品IDの生成
 		itemID := fmt.Sprintf("ITM%d", time.Now().UnixNano())
 
-		// 【修正】クエリのプレースホルダー数に合わせて、最後に req.ImageURL をしっかりと追加
+		// クエリのプレースホルダー数に合わせて、最後に req.ImageURL をしっかりと追加
 		query := `INSERT INTO items (id, seller_id, title, description, initial_price, current_price, category, status, image_url) 
                VALUES (?, ?, ?, ?, ?, ?, ?, 'on_sale', ?)`
 
@@ -61,12 +61,13 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// 変数の重複宣言を解消し、Scanの構造体と完全に一致するSELECT文に変更
+		// usersテーブルをJOINして、u.name（出品者名）を引っ張ってくる
 		query := `
-          SELECT id, title, description, current_price, seller_id, image_url 
-          FROM items 
-          WHERE status = 'on_sale' 
-          ORDER BY created_at DESC`
+          SELECT i.id, i.title, i.description, i.current_price, i.seller_id, u.name, i.image_url 
+          FROM items i
+          JOIN users u ON i.seller_id = u.id
+          WHERE i.status = 'on_sale' 
+          ORDER BY i.created_at DESC`
 
 		rows, err := db.Query(query)
 		if err != nil {
@@ -82,8 +83,8 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 			var item Item
 			var imageURL sql.NullString
 
-			// Scanの数とSELECTのカラム順を完全にシンクロ
-			if err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.CurrentPrice, &item.SellerID, &imageURL); err != nil {
+			// Scanの項目に &item.SellerName を追加して、u.name の中身を受け取る！
+			if err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.CurrentPrice, &item.SellerID, &item.SellerName, &imageURL); err != nil {
 				log.Printf("商品スキャンエラー: %v", err)
 				continue
 			}
@@ -97,7 +98,7 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if items == nil {
-			items = []Item{} // 型不一致を防ぐために宣言通りの空スライスを返却
+			items = []Item{}
 		}
 		json.NewEncoder(w).Encode(items)
 	}
@@ -135,7 +136,7 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		imgURL := req.ImageURLs[0]
 
 		// ========================================================
-		// 🚀 GoがCloudinaryから直接「画像データ」をダウンロード！
+		// GoがCloudinaryから直接「画像データ」をダウンロード！
 		// ========================================================
 		respImg, err := http.Get(imgURL)
 		if err != nil {
@@ -153,7 +154,7 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		}
 
 		// ========================================================
-		// 🤖 Geminiの目に画像を直接押し付けて鑑定させる！
+		// Geminiの目に画像を直接押し付けて鑑定させる！
 		// ========================================================
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		ctx := r.Context()
