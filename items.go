@@ -98,10 +98,10 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 // handleAISuggest AI出品サポート (POST /api/items/ai-suggest)
 func handleAISuggest(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 🛡️ 万が一パニック（即死）が起きても、強制終了させずに原因をフロントへ引きずり出す！
+		//
 		defer func() {
-			if p := recover(); p != nil { // 👈 変数名を r から p に修正して安全に
-				log.Printf("🔥 AIハンドラー内でパニック発生: %v", p)
+			if p := recover(); p != nil { //変数名を r から p に修正して安全に
+				log.Printf(" AIハンドラー内でパニック発生: %v", p)
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.WriteHeader(http.StatusInternalServerError)
@@ -133,14 +133,13 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 		if err != nil {
 			log.Printf("Geminiクライアント初期化失敗: %v", err)
-			// 🎯 err.Error() に大文字修正！
 			respondWithError(w, http.StatusInternalServerError, "AI接続失敗: "+err.Error())
 			return
 		}
 		defer client.Close()
 
 		// 3. 安定版の「models/gemini-1.5-flash」を指定
-		model := client.GenerativeModel("models/gemini-1.5-flash")
+		model := client.GenerativeModel("gemini-1.5-flash")
 		model.ResponseMIMEType = "application/json"
 
 		// 4. プロンプトの作成
