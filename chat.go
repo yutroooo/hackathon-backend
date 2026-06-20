@@ -61,7 +61,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
-			// 💬 チャット履歴の取得
+			// チャット履歴の取得
 			query := "SELECT id, room_id, sender_id, message, created_at FROM chat_messages WHERE room_id = ? ORDER BY created_at ASC"
 
 			rows, err := db.Query(query, roomID)
@@ -85,7 +85,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 				messages = append(messages, msg)
 			}
 
-			// 🛠️ 【修正3】for rows.Next() ループ終了後のエラーチェックを追加
+			//  【修正3】for rows.Next() ループ終了後のエラーチェックを追加
 			if err := rows.Err(); err != nil {
 				log.Printf("データ読み込み反復エラー: %v", err)
 				respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -99,7 +99,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(messages)
 
 		case http.MethodPost:
-			// ✉️ メッセージの送信
+			// メッセージの送信
 			var req SendMessageRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				respondWithError(w, http.StatusBadRequest, "Invalid Request Body")
@@ -135,18 +135,17 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			// 交渉部屋（negotiation）の場合のみ、本物のGeminiが考えて自動返信する
 			if roomType == "negotiation" {
-				// 💡 即時実行の無名関数で包むことで、エラー時に 'return' で安全にAI処理だけをスキップさせます
+				// 即時実行の無名関数で包むことで、エラー時に 'return' で安全にAI処理だけをスキップさせます
 				func() {
 					var itemID, itemTitle, itemDesc string
 					var currentPrice int
 
-					// 🛠️ 【修正】部屋から商品IDを特定し、きっちりエラーハンドリング
+					// 部屋から商品IDを特定し、きっちりエラーハンドリング
 					err = db.QueryRow("SELECT item_id FROM chat_rooms WHERE id = ?", roomID).Scan(&itemID)
 					if err != nil {
-						log.Printf("AI用商品ID取得エラー（処理をスキップします）: %v", roomID, err)
-						return // AIの自動返信処理だけを安全に終了して抜ける
+						log.Printf("AI用商品ID取得エラー（処理をスキップします）: %v", err)
+						return
 					}
 
 					// 商品詳細を取得
@@ -154,10 +153,9 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					if err != nil {
 						log.Printf("AI用商品情報取得エラー: %v", err)
 						itemTitle = "不明な商品"
-						// 商品詳細が取れなくても、最悪会話履歴だけで粘れる可能性があるので、ここは return せずに続行する優しさ
 					}
 
-					// 💡 会話の流れを汲み取るために、直近のチャット履歴を5件ほど取得する
+					// 会話の流れを汲み取るために、直近のチャット履歴を5件ほど取得する
 					historyQuery := "SELECT sender_id, message FROM chat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 5"
 					rows, err := db.Query(historyQuery, roomID)
 
@@ -188,27 +186,40 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 
 					model := client.GenerativeModel("gemini-2.5-flash")
 
+					// Geminiに「構造化したJSONで返せ」と命令するモードを設定！
+					model.ResponseMIMEType = "application/json"
+
+					// プロンプトをJSON返却仕様＆合意判定仕様にチューニング
 					prompt := fmt.Sprintf(`
-					あなたはフリマアプリの「AI価格交渉代行エージェント」です。
-					出品者の代わりに、購入希望のユーザーと丁寧かつリアルな価格交渉を行ってください。
+      あなたはフリマアプリの「AI価格交渉代行エージェント」です。
+      出品者の代わりに、購入希望のユーザーと丁寧かつリアルな価格交渉を行ってください。
 
-					【対象の商品情報】
-					商品名: %s
-					現在の価格: %d円
-					商品説明: %s
+      【対象の商品情報】
+      商品名: %s
+      現在の価格: %d円
+      商品説明: %s
 
-					【直近のチャット履歴】
-					%s
+      【直近のチャット履歴】
+      %s
 
-					【現在の状況】
-					ユーザーから「%s」というメッセージが届きました。
+      【現在の状況】
+      ユーザーから「%s」というメッセージが届きました。
 
-					【あなたの任務】
-					- これまでの文脈と、ユーザーの最新のメッセージに合致する、自然な返答を1通だけ作成してください。
-					- 口調は丁寧で、少しフリマアプリ慣れしている親しみやすい敬語（〜です、〜ます）にしてください。
-					- 出品者の不利益にならないよう、いきなり大幅な値引き（2割以上など）には応じず、「間の価格」を提案するなどして、リアルに交渉を引き伸ばすか成立させてください。
-					- 挨拶や余計な解説文、バッククォーツ（"""）などは一切含めず、**「ユーザーに送信するメッセージの本文」だけ**を出力してください。
-					`, itemTitle, currentPrice, itemDesc, chatHistoryStr, req.Message)
+      【あなたの任務】
+      - これまでの文脈と、ユーザーの最新のメッセージに合致する、自然な返答を1通だけ作成してください。
+      - 口調は丁寧で、親しみやすい敬語（〜です、〜ます）にしてください。
+      - いきなり大幅な値引きには応じず、「間の価格」を提案するなどして、リアルに交渉を引き伸ばすか成立させてください。
+      - **最重要**: ユーザーの提案した価格、あるいはお互いの妥協点で価格交渉が「成立・合意」に達したと判断した場合は、"is_agreed" を true にし、"agreed_price" に合意した金額を整数（数値）で設定してください。まだ交渉が続いている場合は "is_agreed" は false にしてください。
+
+      【出力フォーマット】
+      必ず以下のJSONフォーマットの形式だけで返答してください。余計な解説や前置き、バッククォーツ（json ）などは一切含めないでください。
+
+      {
+         "message": "ユーザーに送信するチャットメッセージ本文（解説などは含めない単一のテキスト）",
+         "is_agreed": 価格交渉が成立・合意に達したかどうかの真偽値 (true / false),
+         "agreed_price": 交渉が成立した場合の合意価格（数値）。未成立なら0
+      }
+      `, itemTitle, currentPrice, itemDesc, chatHistoryStr, req.Message)
 
 					// Geminiに思考させる
 					resp, err := model.GenerateContent(ctx, genai.Text(prompt))
@@ -217,21 +228,36 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						return
 					}
 
-					// 生成されたテキストをAIの返答として確定
-					aiReply := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+					// AIの返答（JSON文字列）を取り出す
+					aiJsonStr := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
 
-					//  AIの魂の返答を、メッセージとしてDBに刻み込む！
-					_, err = db.Exec(query, roomID, nil, aiReply) // sender_id = null (AI)
+					// AIの返答JSONをパースするための構造体
+					type ChatAIResponse struct {
+						Message     string `json:"message"`
+						IsAgreed    bool   `json:"is_agreed"`
+						AgreedPrice int    `json:"agreed_price"`
+					}
+
+					var aiRes ChatAIResponse
+					if err := json.Unmarshal([]byte(aiJsonStr), &aiRes); err != nil {
+						log.Printf("AI応答のJSONパース失敗、通常のテキストとしてフォールバックします: %v", err)
+						aiRes.Message = aiJsonStr // パース失敗時はそのままメッセージにする防衛策
+					}
+
+					//  AIの確定したメッセージを、DBに刻み込む！
+					_, err = db.Exec(query, roomID, nil, aiRes.Message) // sender_id = null (AI)
 					if err != nil {
 						log.Printf("AI自動返信の保存に失敗: %v", err)
 					}
-				}() // 閉じカッコのあとに () をつけることで、定義した瞬間にこの関数を実行します
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 
-		default:
-			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
-		}
-	}
-}
+					// 交渉成立（is_agreed == true）なら、商品の現在価格を上書き更新する！
+					if aiRes.IsAgreed && aiRes.AgreedPrice > 0 {
+						log.Printf("【価格交渉成立】価格を %d 円に更新します。商品ID: %s", aiRes.AgreedPrice, itemID)
+						updatePriceQuery := "UPDATE items SET current_price = ? WHERE id = ?"
+						_, err := db.Exec(updatePriceQuery, aiRes.AgreedPrice, itemID)
+						if err != nil {
+							log.Printf("DBの商品価格更新エラー: %v", err)
+						}
+					}
+				}()
+			}
