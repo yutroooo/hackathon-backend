@@ -98,14 +98,14 @@ func handleGetItems(db *sql.DB) http.HandlerFunc {
 // handleAISuggest AI出品サポート (POST /api/items/ai-suggest)
 func handleAISuggest(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 🛡️ 【最強の防衛策】万が一パニック（即死）が起きても、強制終了させずに原因をフロントへ引きずり出す！
+		// 🛡️ 万が一パニック（即死）が起きても、強制終了させずに原因をフロントへ引きずり出す！
 		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("🔥 AIハンドラー内でパニック発生: %v", r)
+			if p := recover(); p != nil { // 👈 変数名を r から p に修正して安全に
+				log.Printf("🔥 AIハンドラー内でパニック発生: %v", p)
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Access-Control-Allow-Origin", "*") // CORSブロックを強制突破
+				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("AI内部即死パニック: %v", r)})
+				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("AI内部即死パニック: %v", p)})
 			}
 		}()
 
@@ -133,20 +133,17 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 		if err != nil {
 			log.Printf("Geminiクライアント初期化失敗: %v", err)
-			respondWithError(w, http.StatusInternalServerError, "AI接続失敗: "+err.error())
+			// 🎯 err.Error() に大文字修正！
+			respondWithError(w, http.StatusInternalServerError, "AI接続失敗: "+err.Error())
 			return
 		}
 		defer client.Close()
 
-		// 🎯 【修正ポイント1】ハッカソン実績No.1の絶対安全な「models/gemini-1.5-flash」に変更！
-		// 頭に「models/」を明示的につけることで、古いSDKでも解釈エラーを起こさず100%確実に動くようになります。
-		// 出品サポートの能力としては1.5-flashで200%お釣りが来ます！
+		// 3. 安定版の「models/gemini-1.5-flash」を指定
 		model := client.GenerativeModel("models/gemini-1.5-flash")
-
-		// 💡 Geminiに「JSONで返してね」と強制するモードを設定
 		model.ResponseMIMEType = "application/json"
 
-		// 4. プロンプト（AIへの命令文）の作成
+		// 4. プロンプトの作成
 		imageUrl := "なし"
 		if len(req.ImageURLs) > 0 {
 			imageUrl = req.ImageURLs[0]
@@ -173,11 +170,11 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
 		if err != nil {
 			log.Printf("Gemini呼び出し失敗: %v", err)
-			respondWithError(w, http.StatusInternalServerError, "GeminiのAPI叩く所で失敗: "+err.error())
+			respondWithError(w, http.StatusInternalServerError, "GeminiのAPI叩く所で失敗: "+err.Error())
 			return
 		}
 
-		// 🛡️ 【修正ポイント2】resp や Candidates が万が一 nil だった場合のぬるぽ即死を絶対に防ぐ安全ガード
+		// 6. 安全ガード
 		if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
 			respondWithError(w, http.StatusInternalServerError, "AIからの応答が空っぽ、または構造が異常です")
 			return
@@ -186,7 +183,6 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		// AIの返答テキスト（JSON文字列）を取り出す
 		aiJsonStr := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
 
-		// 綺麗にフロントエンドへそのまま流す
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(aiJsonStr))
