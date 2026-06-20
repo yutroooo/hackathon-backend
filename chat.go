@@ -187,8 +187,6 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 					rows, err := db.Query(historyQuery, roomID)
 
 					var chatHistoryStr string
-					var isLatestMessageFromSeller bool // 出品者からのメッセージかどうかのフラグ
-					var isFirstRow = true              // 1件目（最新メッセージ）を特定するためのフラグ
 
 					if err == nil {
 						defer rows.Close()
@@ -196,12 +194,6 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 							var sID *string
 							var msg string
 							rows.Scan(&sID, &msg)
-
-							// 🎯 最新のメッセージの送信者が、出品者本人（sellerID）ならフラグを立てる
-							if isFirstRow && sID != nil && *sID == sellerID {
-								isLatestMessageFromSeller = true
-							}
-							isFirstRow = false
 
 							senderLabel := "ユーザー"
 							if sID == nil {
@@ -211,9 +203,13 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						}
 					}
 
-					// 最新のメッセージが出品者（あなた）自身からだった場合は、AIをここで緊急停止
-					if isLatestMessageFromSeller {
-						log.Printf("👤 最新のメッセージが出品者本人のため、AI自動応答をスキップして終了します。")
+					// 今届いたメッセージのテキスト(req.Message)をDBから直接逆引きして、送信者を出品者本人か確定させる！
+					var actualSenderID *string
+					checkQuery := "SELECT sender_id FROM chat_messages WHERE room_id = ? AND message = ? ORDER BY created_at DESC LIMIT 1"
+					errCheck := db.QueryRow(checkQuery, roomID, req.Message).Scan(&actualSenderID)
+
+					if errCheck == nil && actualSenderID != nil && *actualSenderID == sellerID {
+						log.Printf(" 精密検証成功：このメッセージの送信者は出品者本人です。AI自動応答を100%スキップします。")
 						return
 					}
 
