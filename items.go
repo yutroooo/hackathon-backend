@@ -139,7 +139,7 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 		defer client.Close()
 
 		// 3. 安定版の「models/gemini-1.5-flash」を指定
-		model := client.GenerativeModel("gemini-1.5-flash-latest")
+		model := client.GenerativeModel("gemini-2.5-flash")
 		model.ResponseMIMEType = "application/json"
 
 		// 4. プロンプトの作成
