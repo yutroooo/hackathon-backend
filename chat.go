@@ -203,13 +203,9 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						}
 					}
 
-					// 今届いたメッセージのテキスト(req.Message)をDBから直接逆引きして、送信者を出品者本人か確定させる！
-					var actualSenderID *string
-					checkQuery := "SELECT sender_id FROM chat_messages WHERE room_id = ? AND message = ? ORDER BY created_at DESC LIMIT 1"
-					errCheck := db.QueryRow(checkQuery, roomID, req.Message).Scan(&actualSenderID)
-
-					if errCheck == nil && actualSenderID != nil && *actualSenderID == sellerID {
-						log.Printf(" 精密検証成功：このメッセージの送信者は出品者本人です。AI自動応答を100%スキップします。")
+					// 🎯 【究極の最終防衛ライン】DBの書き込み遅延に左右されない、リクエスト直引き判定！
+					if req.SenderID == sellerID {
+						log.Printf("👤 送信者が「出品者（オーナー）」本人です！ポンコツAIを即座に強制シャットダウンします。")
 						return
 					}
 
