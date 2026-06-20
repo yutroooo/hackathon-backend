@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
+
+	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/api/option"
 )
 
 // handleCreateRoom チャット部屋の作成 (POST /api/rooms)
@@ -131,16 +135,98 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			// 交渉部屋（negotiation）の場合のみAIが反応する
+			// 交渉部屋（negotiation）の場合のみ、本物のGeminiが考えて自動返信する
 			if roomType == "negotiation" {
-				// AIの発言をシミュレート
-				aiReply := fmt.Sprintf("（AI交渉エージェント）「ご提示いただいた条件について検討しています。現在の提示価格から、あと5%%ほどお値引き可能であれば即決いたします！」")
-				_, err = db.Exec(query, roomID, nil, aiReply)
-				if err != nil {
-					log.Printf("AI自動返信の保存に失敗: %v", err)
-				}
-			}
+				// 💡 即時実行の無名関数で包むことで、エラー時に 'return' で安全にAI処理だけをスキップさせます
+				func() {
+					var itemID, itemTitle, itemDesc string
+					var currentPrice int
 
+					// 🛠️ 【修正】部屋から商品IDを特定し、きっちりエラーハンドリング
+					err = db.QueryRow("SELECT item_id FROM chat_rooms WHERE id = ?", roomID).Scan(&itemID)
+					if err != nil {
+						log.Printf("AI用商品ID取得エラー（処理をスキップします）: %v", roomID, err)
+						return // AIの自動返信処理だけを安全に終了して抜ける
+					}
+
+					// 商品詳細を取得
+					err = db.QueryRow("SELECT title, current_price, description FROM items WHERE id = ?", itemID).Scan(&itemTitle, &currentPrice, &itemDesc)
+					if err != nil {
+						log.Printf("AI用商品情報取得エラー: %v", err)
+						itemTitle = "不明な商品"
+						// 商品詳細が取れなくても、最悪会話履歴だけで粘れる可能性があるので、ここは return せずに続行する優しさ
+					}
+
+					// 💡 会話の流れを汲み取るために、直近のチャット履歴を5件ほど取得する
+					historyQuery := "SELECT sender_id, message FROM chat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 5"
+					rows, err := db.Query(historyQuery, roomID)
+
+					var chatHistoryStr string
+					if err == nil {
+						defer rows.Close()
+						for rows.Next() {
+							var sID *string
+							var msg string
+							rows.Scan(&sID, &msg)
+							senderLabel := "ユーザー"
+							if sID == nil {
+								senderLabel = "あなた（AI）"
+							}
+							chatHistoryStr = fmt.Sprintf("[%s]: %s\n%s", senderLabel, msg, chatHistoryStr)
+						}
+					}
+
+					//  Gemini API の呼び出し準備
+					apiKey := os.Getenv("GEMINI_API_KEY")
+					ctx := r.Context()
+					client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+					if err != nil {
+						log.Printf("Geminiクライアント起動失敗: %v", err)
+						return
+					}
+					defer client.Close()
+
+					model := client.GenerativeModel("gemini-2.5-flash")
+
+					prompt := fmt.Sprintf(`
+					あなたはフリマアプリの「AI価格交渉代行エージェント」です。
+					出品者の代わりに、購入希望のユーザーと丁寧かつリアルな価格交渉を行ってください。
+
+					【対象の商品情報】
+					商品名: %s
+					現在の価格: %d円
+					商品説明: %s
+
+					【直近のチャット履歴】
+					%s
+
+					【現在の状況】
+					ユーザーから「%s」というメッセージが届きました。
+
+					【あなたの任務】
+					- これまでの文脈と、ユーザーの最新のメッセージに合致する、自然な返答を1通だけ作成してください。
+					- 口調は丁寧で、少しフリマアプリ慣れしている親しみやすい敬語（〜です、〜ます）にしてください。
+					- 出品者の不利益にならないよう、いきなり大幅な値引き（2割以上など）には応じず、「間の価格」を提案するなどして、リアルに交渉を引き伸ばすか成立させてください。
+					- 挨拶や余計な解説文、バッククォーツ（"""）などは一切含めず、**「ユーザーに送信するメッセージの本文」だけ**を出力してください。
+					`, itemTitle, currentPrice, itemDesc, chatHistoryStr, req.Message)
+
+					// Geminiに思考させる
+					resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+					if err != nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+						log.Printf("Gemini応答生成失敗または空の応答: %v", err)
+						return
+					}
+
+					// 生成されたテキストをAIの返答として確定
+					aiReply := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+
+					//  AIの魂の返答を、メッセージとしてDBに刻み込む！
+					_, err = db.Exec(query, roomID, nil, aiReply) // sender_id = null (AI)
+					if err != nil {
+						log.Printf("AI自動返信の保存に失敗: %v", err)
+					}
+				}() // 閉じカッコのあとに () をつけることで、定義した瞬間にこの関数を実行します
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 

@@ -8,6 +8,8 @@ import (
 	"os"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/google/generative-ai-go/genai"
+	_ "google.golang.org/api/option"
 )
 
 func withCORS(next http.HandlerFunc) http.HandlerFunc {

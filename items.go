@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
+
+	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/api/option"
 )
 
 // handleCreateItem 商品出品 (POST /api/items)
@@ -105,18 +109,73 @@ func handleAISuggest(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		//  ハッカソンモック用の暫定AIレスポンス
-		// 本番はここに Gemini API や OpenAI API のコールを組み込む
-		log.Printf("AI提案要求を受け取りました。画像URL数: %d", len(req.ImageURLs))
-
-		suggested := AISuggestResponse{
-			Title:            "【極美品】限定レアスニーカー 27cm",
-			Description:      "ハッカソン会場で一度だけ着用した限定モデルです。状態は非常に良く、ソールの減りもほぼありません。即購入OKです！",
-			Category:         "ファッション・靴",
-			RecommendedPrice: 12800,
+		// 1. 環境変数から Gemini の API キーを取得
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if apiKey == "" {
+			log.Printf("エラー: GEMINI_API_KEY が設定されていません")
+			respondWithError(w, http.StatusInternalServerError, "AI設定エラー")
+			return
 		}
 
+		// 2. Gemini クライアントの初期化
+		ctx := r.Context()
+		client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+		if err != nil {
+			log.Printf("Geminiクライアント初期化失敗: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "AI接続失敗")
+			return
+		}
+		defer client.Close()
+
+		// 3. 使用するモデルの指定（2026年現在、軽量・高速・超高性能な gemini-2.5-flash がハッカソンに最適）
+		model := client.GenerativeModel("gemini-2.5-flash")
+
+		// 💡 Geminiに「JSONで返してね」と強制するモードを設定（これでパースが超楽になります）
+		model.ResponseMIMEType = "application/json"
+
+		// 4. プロンプト（AIへの命令文）の作成
+		imageUrl := "なし"
+		if len(req.ImageURLs) > 0 {
+			imageUrl = req.ImageURLs[0]
+		}
+
+		prompt := fmt.Sprintf(`
+		あなたはフリマアプリの凄腕出品シニアアドバイザーです。
+		ユーザーから提出された以下の情報（画像URL等）を分析し、魅力的な出品情報を生成してください。
+
+		【入力された画像URL】: %s
+
+		【出力フォーマット】
+		必ず以下のJSONフォーマットの形式だけで返答してください。余計な解説や前置き、バッククォーツ（json ）などは一切含めないでください。
+
+		{
+			"title": "ここに生成した商品タイトル（50文字以内）",
+			"description": "ここに生成した魅力的な商品説明文。状態やハッシュタグなども含む",
+			"category": "ここに適切なカテゴリ名",
+			"recommended_price": 適切な推奨価格を数値（整数）で
+		}
+		`, imageUrl)
+
+		// 5. Gemini に聞いてみる
+		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+		if err != nil {
+			log.Printf("Gemini呼び出し失敗: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "AI生成に失敗しました")
+			return
+		}
+
+		// 6. 返ってきたテキストをパースしてフロントに返す
+		if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+			respondWithError(w, http.StatusInternalServerError, "AIからの応答が空でした")
+			return
+		}
+
+		// AIの返答テキスト（JSON文字列）を取り出す
+		aiJsonStr := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+
+		// 綺麗にフロントエンドへそのまま流す
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(suggested)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(aiJsonStr))
 	}
 }
