@@ -51,10 +51,15 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("/api/items/ai-suggest", handleAISuggest(db))
-
+	// 部屋作成用（フロントは /api/chat/rooms を呼んでいる）
 	http.HandleFunc("/api/chat/rooms", handleCreateRoom(db))
-	http.HandleFunc("/api/chat/rooms/messages", handleRoomMessages(db)) // ※もしフロントエンド側が /api/chat/messages などを呼んでいる場合は、そちらに合わせてください！
+
+	http.HandleFunc("/api/rooms", handleCreateRoom(db))
+
+	// メッセージ取得・送信用（フロントは /api/rooms/messages を呼んでいる）
+	http.HandleFunc("/api/rooms/messages", handleRoomMessages(db))
+
+	http.HandleFunc("/api/chat/rooms/messages", handleRoomMessages(db))
 
 	c := cors.AllowAll()
 
