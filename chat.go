@@ -33,11 +33,11 @@ func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 		}
 
 		// ========================================================
-		// 🎯 【超重要ハック】すでにこの商品に対するアクティブな部屋があるかチェック！
+		// 【超重要ハック】すでにこの商品に対するアクティブな部屋があるかチェック！
 		// ========================================================
 		var existingRoomID string
-		checkQuery := "SELECT id FROM chat_rooms WHERE item_id = ? AND type = ? AND status = 'active' LIMIT 1"
-		err := db.QueryRow(checkQuery, req.ItemID, req.Type).Scan(&existingRoomID)
+		checkQuery := "SELECT id FROM chat_rooms WHERE item_id = ? AND buyer_id = ? AND type = ? AND status = 'active' LIMIT 1"
+		err := db.QueryRow(checkQuery, req.ItemID, req.BuyerID, req.Type).Scan(&existingRoomID)
 
 		if err == nil {
 			// 🎉 すでに部屋が存在していた！新しく作らずに、その部屋IDを返して合流させる！
@@ -61,14 +61,13 @@ func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 		roomID := fmt.Sprintf("RM%d", time.Now().UnixNano())
 
 		// DBに部屋を挿入
-		query := "INSERT INTO chat_rooms (id, item_id, type, status) VALUES (?, ?, ?, 'active')"
-		_, err = db.Exec(query, roomID, req.ItemID, req.Type)
+		query := "INSERT INTO chat_rooms (id, item_id, buyer_id, type, status) VALUES (?, ?, ?, ?, 'active')"
+		_, err = db.Exec(query, roomID, req.ItemID, req.BuyerID, req.Type)
 		if err != nil {
 			log.Printf("チャット部屋作成エラー: %v", err)
 			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated) // 新規作成なので 21 Created
 		json.NewEncoder(w).Encode(map[string]string{"room_id": roomID, "status": "active"})

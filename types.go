@@ -74,8 +74,10 @@ type ItemResponse struct {
 
 // CreateRoomRequest 交渉部屋（またはDM部屋）を立ち上げるリクエスト
 type CreateRoomRequest struct {
-	ItemID string `json:"item_id"`
-	Type   string `json:"type"` // 'negotiation' または 'transaction'
+	ItemID  string `json:"item_id"`
+	Type    string `json:"type"`
+	BuyerID string `json:"buyer_id"`
+	// 'negotiation' または 'transaction'
 }
 
 // RoomResponse 作成された（または取得した）チャット部屋情報
