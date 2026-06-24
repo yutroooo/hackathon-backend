@@ -4,13 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/google/generative-ai-go/genai"
+
+	"google.golang.org/api/option"
 	"log"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/google/generative-ai-go/genai"
-	"google.golang.org/api/option"
 )
 
 // handleCreateRoom チャット部屋の作成・または既存の部屋を返す (POST /api/rooms)
