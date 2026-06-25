@@ -15,8 +15,8 @@ import (
 	"google.golang.org/api/option"
 )
 
-// handleCreateRoom チャット部屋の作成・または既存の部屋を返す (POST /api/rooms)
-func handleCreateRoom(db *sql.DB) http.HandlerFunc {
+// handleRooms チャット部屋の一覧取得(GET) と 作成・合流(POST)
+func handleRooms(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -26,79 +26,83 @@ func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if r.Method != http.MethodPost {
-			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
-			return
-		}
-
-		var req CreateRoomRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid Request Body")
-			return
-		}
-
-		if req.ItemID == "" || req.Type == "" || req.BuyerID == "" {
-			respondWithError(w, http.StatusBadRequest, "必須項目が不足しています")
-			return
-		}
 
 		// ========================================================
-		// 出品者本人が開いたのか、購入者が開いたのかを判定！
+		// 🟢 GET: 出品者用（その商品のチャット部屋一覧を取得する）
 		// ========================================================
-		var sellerID string
-		err := db.QueryRow("SELECT seller_id FROM items WHERE id = ?", req.ItemID).Scan(&sellerID)
-		if err != nil {
-			log.Printf("商品情報の取得エラー: %v", err)
-			respondWithError(w, http.StatusInternalServerError, "商品が見つかりません")
-			return
-		}
-
-		var existingRoomID string
-
-		if req.BuyerID == sellerID {
-			//  出品者本人が「DMを確認」ボタンを押した場合
-			// → buyer_id を無視して、この商品に対する最新のチャット部屋を探して返す！
-			checkQuery := "SELECT id FROM chat_rooms WHERE item_id = ? AND type = ? AND status = 'active' ORDER BY id DESC LIMIT 1"
-			err = db.QueryRow(checkQuery, req.ItemID, req.Type).Scan(&existingRoomID)
-
-			if err == sql.ErrNoRows {
-				respondWithError(w, http.StatusNotFound, "まだ購入希望者からのメッセージはありません")
+		if r.Method == http.MethodGet {
+			itemID := r.URL.Query().Get("item_id")
+			if itemID == "" {
+				respondWithError(w, http.StatusBadRequest, "item_id が必要です")
 				return
 			}
-		} else {
-			// 購入希望者が「DMを送る」ボタンを押した場合
-			// → 自分(buyer)専用の部屋があるかチェック
-			checkQuery := "SELECT id FROM chat_rooms WHERE item_id = ? AND buyer_id = ? AND type = ? AND status = 'active' LIMIT 1"
-			err = db.QueryRow(checkQuery, req.ItemID, req.BuyerID, req.Type).Scan(&existingRoomID)
-		}
 
-		//  すでに部屋が存在した場合は、その部屋IDを返す（合流）
-		if err == nil {
-			log.Printf("👥 既存のチャット部屋を発見。合流させます。RoomID: %s", existingRoomID)
+			query := "SELECT id, buyer_id FROM chat_rooms WHERE item_id = ? AND status = 'active' ORDER BY created_at DESC"
+			rows, err := db.Query(query, itemID)
+			if err != nil {
+				log.Printf("部屋一覧取得エラー: %v", err)
+				respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			defer rows.Close()
+
+			// 部屋のリストを作成
+			var rooms []map[string]string
+			for rows.Next() {
+				var id, buyerID string
+				if err := rows.Scan(&id, &buyerID); err == nil {
+					rooms = append(rooms, map[string]string{"id": id, "buyer_id": buyerID})
+				}
+			}
+
+			if rooms == nil {
+				rooms = []map[string]string{}
+			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"room_id": existingRoomID, "status": "active"})
-			return
-		} else if err != sql.ErrNoRows {
-			log.Printf("既存チャット部屋確認エラー: %v", err)
-			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+			json.NewEncoder(w).Encode(rooms)
 			return
 		}
 
 		// ========================================================
-		//  部屋がまだない場合だけ、以下で新規に作成する
+		// 🛒 POST: 購入希望者用（自分専用の部屋を作成、または合流する）
 		// ========================================================
-		roomID := fmt.Sprintf("RM%d", time.Now().UnixNano())
-		query := "INSERT INTO chat_rooms (id, item_id, buyer_id, type, status) VALUES (?, ?, ?, ?, 'active')"
-		_, err = db.Exec(query, roomID, req.ItemID, req.BuyerID, req.Type)
-		if err != nil {
-			log.Printf("チャット部屋作成エラー: %v", err)
-			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
-			return
+		if r.Method == http.MethodPost {
+			var req CreateRoomRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				respondWithError(w, http.StatusBadRequest, "Invalid Request Body")
+				return
+			}
+
+			if req.ItemID == "" || req.Type == "" || req.BuyerID == "" {
+				respondWithError(w, http.StatusBadRequest, "必須項目が不足しています")
+				return
+			}
+
+			var existingRoomID string
+			// 購入希望者自身の部屋があるかだけをシンプルにチェック
+			checkQuery := "SELECT id FROM chat_rooms WHERE item_id = ? AND buyer_id = ? AND type = ? AND status = 'active' LIMIT 1"
+			err := db.QueryRow(checkQuery, req.ItemID, req.BuyerID, req.Type).Scan(&existingRoomID)
+
+			if err == nil {
+				// 既存の部屋へ合流
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]string{"room_id": existingRoomID, "status": "active"})
+				return
+			}
+
+			// 新規作成
+			roomID := fmt.Sprintf("RM%d", time.Now().UnixNano())
+			query := "INSERT INTO chat_rooms (id, item_id, buyer_id, type, status) VALUES (?, ?, ?, ?, 'active')"
+			_, err = db.Exec(query, roomID, req.ItemID, req.BuyerID, req.Type)
+			if err != nil {
+				respondWithError(w, http.StatusInternalServerError, "部屋作成エラー")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]string{"room_id": roomID, "status": "active"})
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"room_id": roomID, "status": "active"})
 	}
 }
 

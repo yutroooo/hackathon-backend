@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+
 	_ "github.com/go-sql-driver/mysql"
 	// _ "github.com/google/generative-ai-go/genai" // main.goで使っていない場合は消してOK
 	"github.com/rs/cors"
@@ -52,9 +53,9 @@ func main() {
 	})
 
 	// 部屋作成用（フロントは /api/chat/rooms を呼んでいる）
-	http.HandleFunc("/api/chat/rooms", handleCreateRoom(db))
+	http.HandleFunc("/api/chat/rooms", handleRooms(db))
 
-	http.HandleFunc("/api/rooms", handleCreateRoom(db))
+	http.HandleFunc("/api/rooms", handleRooms(db))
 
 	// メッセージ取得・送信用（フロントは /api/rooms/messages を呼んでいる）
 	http.HandleFunc("/api/rooms/messages", handleRoomMessages(db))
