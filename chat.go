@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
 	"github.com/google/generative-ai-go/genai"
 
-	"google.golang.org/api/option"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"google.golang.org/api/option"
 )
 
 // handleCreateRoom チャット部屋の作成・または既存の部屋を返す (POST /api/rooms)
@@ -48,7 +50,6 @@ func handleCreateRoom(db *sql.DB) http.HandlerFunc {
 		err := db.QueryRow(checkQuery, req.ItemID, req.BuyerID, req.Type).Scan(&existingRoomID)
 
 		if err == nil {
-			// 🎉 すでに部屋が存在していた！新しく作らずに、その部屋IDを返して合流させる！
 			log.Printf("👥 既存のチャット部屋を発見。合流させます。RoomID: %s, ItemID: %s", existingRoomID, req.ItemID)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK) // 既存返却なので 200 OK
@@ -94,7 +95,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 		switch r.Method {
 		case http.MethodGet:
 			// チャット履歴の取得
-			query := "SELECT id, room_id, sender_id, message, created_at FROM chat_messages WHERE room_id = ? ORDER BY created_at ASC"
+			query := "SELECT id, room_id, sender_id, message,is_agreed, created_at FROM chat_messages WHERE room_id = ? ORDER BY created_at ASC"
 
 			rows, err := db.Query(query, roomID)
 			if err != nil {
@@ -108,7 +109,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 			for rows.Next() {
 				var msg MessageResponse
 				var createdAtRaw []byte
-				err := rows.Scan(&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Message, &createdAtRaw)
+				err := rows.Scan(&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Message, &msg.IsAgreed, &createdAtRaw)
 				if err != nil {
 					log.Printf("行スキャンエラー: %v", err)
 					continue
@@ -159,8 +160,8 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 			}
 
 			// 部屋が存在することが確認できたので、満を持してユーザーの発言をDBに保存
-			query := "INSERT INTO chat_messages (room_id, sender_id, message) VALUES (?, ?, ?)"
-			_, err = db.Exec(query, roomID, req.SenderID, req.Message)
+			query := "INSERT INTO chat_messages (room_id, sender_id, message, is_agreed) VALUES (?, ?, ?, ?)"
+			_, err = db.Exec(query, roomID, req.SenderID, req.Message, false)
 			if err != nil {
 				log.Printf("メッセージ送信エラー: %v", err)
 				respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -181,7 +182,6 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 						return
 					}
 
-					// 2. 🎉【修正！】SELECTに seller_id を追加して、商品の持ち主のIDを正しく取得！
 					err = db.QueryRow("SELECT title, current_price, description, seller_id FROM items WHERE id = ?", itemID).Scan(&itemTitle, &currentPrice, &itemDesc, &sellerID)
 					if err != nil {
 						log.Printf("AI用商品情報取得エラー: %v", err)
@@ -297,7 +297,7 @@ func handleRoomMessages(db *sql.DB) http.HandlerFunc {
 
 					//  AIの確定したメッセージを、DBに
 					// (query は外側のスコープに定義されているものをそのままキャプチャします)
-					_, err = db.Exec(query, roomID, nil, aiRes.Message)
+					_, err = db.Exec(query, roomID, nil, aiRes.Message, aiRes.IsAgreed)
 					if err != nil {
 						log.Printf("AI自動返信の保存に失敗: %v", err)
 					}

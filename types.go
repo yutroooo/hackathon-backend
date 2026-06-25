@@ -101,6 +101,7 @@ type MessageResponse struct {
 	RoomID    string    `json:"room_id"`
 	SenderID  *string   `json:"sender_id,omitempty"` // AI発言やシステム通知の場合はnull
 	Message   string    `json:"message"`
+	IsAgreed  bool      `json:"is_agreed"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
